@@ -1,47 +1,70 @@
 #start from image passed by argument during build process. Usually it is an ubuntu image plus mesa library.
 ARG START_IMG="none"
-ARG METADATA_FILE=/usr/local/bin/setup_metadata.sh
+
 FROM $START_IMG
 
-LABEL maintainer="alexandre.gomespereira@iit.it, valentina.gaggero@iit.it, vadim.tikhanoff@iit.it, valentina.vasco@iit.it "
+LABEL maintainer="valentina.gaggero@iit.it, jacopo.losi@iit.it"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies given in documentation in superbuild
-# https://github.com/robotology/robotology-superbuild#linux
-RUN mkdir /etc/bash_completion.d/ &&\
-    apt-get update &&\
-    apt-get install -y \
+ARG USERNAME=icub
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
+
+RUN apt-get update \
+    && apt-get install -y sudo \
+    && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
+    && chmod 0440 /etc/sudoers.d/$USERNAME
+
+# Create the user
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
+ 
+
+USER $USERNAME
+
+RUN sudo mkdir /etc/bash_completion.d/ &&\
+    sudo apt-get install -y \
         # MISC
         bash-completion \
-        git
+        git \
+        vim \
+        apt-utils
 
 
 #Some definitions
-ARG PROJECTS_DIR=/projects
 ARG CMAKE_GENERATOR="Unix Makefiles"
 ARG BUILD_TYPE=Release
 ARG CMAKE_EXTRA_OPTIONS=-j2
-ARG INSTALL_DIR="/usr/local"
+ARG INSTALL_DIR=/home/icub/install_dir
 ARG release="master"
 ARG sbtag="Stable"
-ARG METADATA_FILE
+ARG METADATA_FILE=/home/icub/install_dir/bin/setup_metadata.sh
 
 
 # Setup entrypoint
 ARG ROBOTOLOGY_INITIALIZATION_FILE=/usr/local/bin/setup_robotology_tdd.sh
+
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY setup.sh ${ROBOTOLOGY_INITIALIZATION_FILE}
+RUN sudo chown -R icub: /usr/local/bin/entrypoint.sh
+RUN sudo chown -R icub: /usr/local/bin/setup_robotology_tdd.sh
+
 ENTRYPOINT [ "/usr/local/bin/entrypoint.sh" ]
 
 
-RUN mkdir ${PROJECTS_DIR} && cd ${PROJECTS_DIR} &&\
+ARG PROJECTS_DIR=/home/icub/projects
+
+#ENV DEBIAN_FRONTEND=noninteractive is not sufficient
+RUN echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections &&\
+    mkdir ${PROJECTS_DIR} && cd ${PROJECTS_DIR} &&\
     git clone https://github.com/robotology/robotology-superbuild.git &&\
     cd robotology-superbuild &&\
     git checkout ${release} -b ${release}_branch &&\
-    ./scripts/install_apt_dependencies.sh &&\
+    sudo ./scripts/install_apt_dependencies.sh &&\
     mkdir build && cd build &&\
-    cmake .. \
+      cmake .. \
         -G "$CMAKE_GENERATOR" \
         -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
         -DNON_INTERACTIVE_BUILD:BOOL=ON \
@@ -53,19 +76,18 @@ RUN mkdir ${PROJECTS_DIR} && cd ${PROJECTS_DIR} &&\
         -DROBOTOLOGY_PROJECT_TAGS=${sbtag} \
         -DYCM_EP_INSTALL_DIR=${INSTALL_DIR} \
         -DENABLE_yarpmod_grabber:BOOL=ON \
-        &&\
-    # Build all the projects
+       &&\
+    #Build all the projects &&\
     cmake --build . --target update-all -- -j4 &&\
     cmake --build . -- ${CMAKE_EXTRA_OPTIONS}
 
 
+ RUN echo "source ${INSTALL_DIR}/share/robotology-superbuild/setup.sh" >>  $ROBOTOLOGY_INITIALIZATION_FILE
+ RUN echo "source ${METADATA_FILE}" >> $ROBOTOLOGY_INITIALIZATION_FILE
 
-RUN echo "source ${INSTALL_DIR}/share/robotology-superbuild/setup.sh" >> $ROBOTOLOGY_INITIALIZATION_FILE
-RUN echo "source ${METADATA_FILE}" >> $ROBOTOLOGY_INITIALIZATION_FILE
-
-# The bashrc is read only when opening an interactive shell. Let other projects find packages contained
-# in the superbuild.
-ENV CMAKE_PREFIX_PATH=${INSTALL_DIR}
+# # The bashrc is read only when opening an interactive shell. Let other projects find packages contained
+# # in the superbuild.
+ ENV CMAKE_PREFIX_PATH=${INSTALL_DIR}
 
 #add checkRobotInterface
 RUN cd ${PROJECTS_DIR} &&\
@@ -77,7 +99,7 @@ RUN cd ${PROJECTS_DIR} &&\
         -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
         &&\
     cmake --build . -- ${CMAKE_EXTRA_OPTIONS} && \
-    cp ./checkRobotInterface /usr/local/bin
+    cp ./checkRobotInterface /home/icub/install_dir/bin
 
 
 
@@ -95,8 +117,8 @@ ENV YARP_COLORED_OUTPUT 1
 ARG metadata="none"
 
 ENV img_metadata=${metadata}
-
-RUN echo 'export img_metadata=${metadata}'  > $METADATA_FILE
+RUN echo "File metadata = ${METADATA_FILE}"
+RUN echo 'export img_metadata=${metadata}'  >> $METADATA_FILE
 RUN echo 'echo 'This images has release=$release and had been building with superbuild_tag=$sbtag. Metadata=$metadata ' '  >> $METADATA_FILE
 
 
