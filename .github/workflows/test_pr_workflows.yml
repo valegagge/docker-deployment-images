@@ -1,0 +1,25 @@
+name: "test_pr_workflows"
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/*.yaml"
+      - ".github/workflows/*.yml"
+  push:
+    paths:
+      - ".github/workflows/*.yaml"
+      - ".github/workflows/*.yml"
+  workflow_dispatch:
+
+jobs:
+  lint-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint workflow files with actionlint
+        uses: raven-actions/actionlint@v1
+
+      - name: Validate workflow YAML syntax
+        run: yamllint .github/workflows/
